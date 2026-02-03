@@ -8,7 +8,7 @@ usage() {
   cat <<'EOF' >&2
 Usage: dickbot-post.sh --text "<text>" [--fid <fid>] [--hash <hash>] [--channel <channelId>] [--disable-already-answered]
 
-Publishes a cast/reply as DICKBOT_FID. Omitting fid/hash creates an original cast.
+Publishes a cast/reply as the configured bot (use `config.json` to change the fid/name). Omitting fid/hash creates an original cast.
 EOF
   exit 1
 }
@@ -59,9 +59,26 @@ fi
 
 api_key="$(jq -r '.apiKey // empty' "$config_file")"
 base_url="$(jq -r '.baseUrl // "https://api.farclaw.com"' "$config_file")"
+bot_fid="$(jq -r '.fid // empty' "$config_file")"
+bot_name="$(jq -r '.name // empty' "$config_file")"
 
 if [[ -z "$api_key" ]]; then
   echo "apiKey missing from config.json" >&2
+  exit 1
+fi
+
+if [[ -z "$bot_fid" ]]; then
+  echo "fid missing in config.json" >&2
+  exit 1
+fi
+
+if ! [[ "$bot_fid" =~ ^[0-9]+$ ]]; then
+  echo "fid must be a positive number in config.json" >&2
+  exit 1
+fi
+
+if [[ -z "$bot_name" ]]; then
+  echo "name missing from config.json" >&2
   exit 1
 fi
 
@@ -85,7 +102,7 @@ payload="$(jq -n \
 )"
 
 curl --fail --show-error -sS \
-  -X POST "${base_url}/api/farcaster/bots/dickbot" \
+  -X POST "${base_url}/api/farcaster/bots/${bot_fid}" \
   -H "Content-Type: application/json" \
   -H "x-api-key: ${api_key}" \
   -d "$payload"

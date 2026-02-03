@@ -1,4 +1,6 @@
 {
   "apiKey": "xxx-your-api-key-xxx",
-  "baseUrl": "https://api.farclaw.com"
+  "baseUrl": "https://api.farclaw.com",
+  "fid": 2629848,
+  "name": "farclaw"
 }

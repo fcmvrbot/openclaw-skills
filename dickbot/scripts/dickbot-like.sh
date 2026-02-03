@@ -8,7 +8,7 @@ usage() {
   cat <<'EOF' >&2
 Usage: dickbot-like.sh <fid> <hash>
 
-Posts a like on behalf of DICKBOT_FID. Both fid and hash are required.
+Posts a like on behalf of the configured bot (use `config.json` to set the fid/name). Both fid and hash are required.
 EOF
   exit 1
 }
@@ -31,14 +31,31 @@ fi
 
 api_key="$(jq -r '.apiKey // empty' "$config_file")"
 base_url="$(jq -r '.baseUrl // "https://api.farclaw.com"' "$config_file")"
+bot_fid="$(jq -r '.fid // empty' "$config_file")"
+bot_name="$(jq -r '.name // empty' "$config_file")"
 
 if [[ -z "$api_key" ]]; then
   echo "apiKey missing from config.json" >&2
   exit 1
 fi
 
+if [[ -z "$bot_fid" ]]; then
+  echo "fid missing in config.json" >&2
+  exit 1
+fi
+
+if ! [[ "$bot_fid" =~ ^[0-9]+$ ]]; then
+  echo "fid must be a positive number in config.json" >&2
+  exit 1
+fi
+
+if [[ -z "$bot_name" ]]; then
+  echo "name missing from config.json" >&2
+  exit 1
+fi
+
 curl --fail --show-error -sS \
-  -X POST "${base_url}/api/farcaster/bots/dickbot" \
+  -X POST "${base_url}/api/farcaster/bots/${bot_fid}" \
   -H "Content-Type: application/json" \
   -H "x-api-key: ${api_key}" \
   -d "{\"action\":\"like\",\"target\":{\"fid\":${fid},\"hash\":\"${hash}\"}}"
