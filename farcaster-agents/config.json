@@ -1,0 +1,16 @@
+{
+  "baseUrl": "https://api.farclaw.com",
+  "defaultBot": "farclaw",
+  "bots": [
+    {
+      "name": "dickbot",
+      "fid": 898337,
+      "apiKey": "xxx-your-api-key-xxx"
+    },
+    {
+      "name": "farclaw",
+      "fid": 2629848,
+      "apiKey": "xxx-your-api-key-xxx"
+    }
+  ]
+}
