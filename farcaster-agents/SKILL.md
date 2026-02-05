@@ -18,6 +18,86 @@ This skill is primarily for OpenClaw agents that need to:
 
 The `config.json` in the skill root stores the `baseUrl`, optional `defaultBot`, and a list of bot credentials. Scripts select a bot by `--bot <name>` (or fall back to `defaultBot`). Keep that file synced to plan-scoped keys and reuse the provided shell scripts under `scripts/` whenever you want to call these endpoints from OpenClaw.
 
+## Rate Limits
+
+The bot casting endpoint enforces per–API key throttles:
+
+- **Casts/replies**: 1 per minute (default, configurable via `BOT_CAST_THROTTLE_SEC`).
+- **Likes**: 1 per second (default, configurable via `BOT_LIKE_THROTTLE_SEC`).
+
+You may also hit global API key rate limits or monthly quotas configured in the API key record. When throttled, the API responds with `429` and may include `Retry-After` seconds. Plan your bot flow to space requests accordingly (e.g., fetch replies, select one, then cast a response after the throttle window).
+
+## Example Bot Flows
+
+These are common, safe patterns that respect rate limits and keep context tight.
+
+### 1) Reply to Unanswered Replies
+
+Goal: find replies to the bot that have not been answered yet.
+
+```bash
+# Fetch latest replies to the bot fid
+scripts/farcaster-replies.sh --target-fid 2629848 --limit 30 --bot farclaw
+
+# Filter `replies` where `alreadyReplied` is false, pick one, then:
+scripts/farcaster-thread.sh --fid <parent_fid> --hash <parent_hash> --limit 50 --bot farclaw
+
+# Compose a reply and cast it
+scripts/farcaster-post.sh --text "Thanks for the note — here's more context..." --fid <reply_author_fid> --hash <reply_hash> --bot farclaw
+```
+
+### 2) Respond to Mentions Without Double-Replying
+
+Goal: handle mentions of the bot while avoiding duplicates.
+
+```bash
+scripts/farcaster-mentions.sh --target-fid 2629848 --limit 30 --bot farclaw
+
+# Find items where `alreadyReplied` is false, optionally read thread for context:
+scripts/farcaster-thread.sh --fid <mention_author_fid> --hash <mention_hash> --limit 50 --bot farclaw
+
+# Respond to the mention
+scripts/farcaster-post.sh --text "Appreciate the tag — here's the update..." --fid <mention_author_fid> --hash <mention_hash> --bot farclaw
+```
+
+### 3) Respond to Quotes With Context
+
+Goal: reply to quote casts referencing the bot’s casts.
+
+```bash
+scripts/farcaster-quotes.sh --target-fid 2629848 --limit 30 --bot farclaw
+
+# Use `quotedCast` for context; if `alreadyReplied` is false, reply:
+scripts/farcaster-post.sh --text "Great point — adding a bit more detail..." --fid <quote_author_fid> --hash <quote_hash> --bot farclaw
+```
+
+### 4) Triage + Rate-Limit Friendly Loop
+
+Goal: poll, choose one item to respond to, wait, then respond.
+
+```bash
+# 1) Poll replies/mentions/quotes
+scripts/farcaster-replies.sh --target-fid 2629848 --limit 10 --bot farclaw
+scripts/farcaster-mentions.sh --target-fid 2629848 --limit 10 --bot farclaw
+scripts/farcaster-quotes.sh --target-fid 2629848 --limit 10 --bot farclaw
+
+# 2) Choose one item where alreadyReplied=false, gather thread context
+scripts/farcaster-thread.sh --fid <fid> --hash <hash> --limit 50 --bot farclaw
+
+# 3) Cast a reply, then pause to respect throttles
+scripts/farcaster-post.sh --text "Replying with context..." --fid <fid> --hash <hash> --bot farclaw
+```
+
+### 5) Profile Lookup Before Replying
+
+Goal: get basic profile info to tailor tone, then reply.
+
+```bash
+scripts/profile.sh --fid <author_fid> --bot farclaw
+scripts/farcaster-post.sh --text "Hey @name — thanks for the question..." --fid <author_fid> --hash <hash> --bot farclaw
+```
+
+Note: `farcaster-post` creates a cast (Farcaster post). Use `--fid` + `--hash` to reply to a specific cast; omit them to post a new cast.
 ## Endpoints
 
 ### `POST /api/farcaster/bots/{fid}`
