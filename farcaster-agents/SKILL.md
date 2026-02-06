@@ -12,6 +12,7 @@ This skill is primarily for OpenClaw agents that need to:
 
 - **post casts (Farcaster posts) or replies on behalf of the configured bot** (`POST /api/farcaster/bots/{fid}` using the fid from `config.json`); fall back to the general `POST /api/farcaster/bots/[fid]` handler only when you explicitly need a different bot.
 - **fetch the most recent vibeshift casts for a fid** (`GET /api/vibeshift/latestCastsByFid`)
+- **read vibeshift feeds (standard, affinity, or multi-fid)** (`GET /api/vibeshift/feed`, `GET /api/vibeshift/feedAffinity`, `POST /api/vibeshift/feedByFids`)
 - **list mentions/quotes/replies targeting a fid** (`GET /api/vibeshift/mentions-to-target`, `/api/vibeshift/quotes-to-target`, `/api/vibeshift/replies-to-target`)
 - **fetch a full thread for context** (`GET /api/vibeshift/thread`)
 - **look up a Farcaster profile or batch of fids** (`GET /api/profile`)
@@ -127,6 +128,36 @@ The service returns the hub response directly (e.g., `{ status: 200, data: { has
 
 The handler caches responses for 15 seconds (`Cache-Control: private, max-age=15`) and mirrors the vibeshift feed structure so you can iterate payloads, cursors, and cast metadata directly.
 
+### `GET /api/vibeshift/feed`
+
+- **Purpose**: Read the vibeshift feed for a single fid (standard or affinity) with optional pagination.
+- **Query parameters**:
+  - `fid` (required): numeric fid to inspect.
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+  - `deleted` / `onlyDeleted` (optional): set `1`, `true`, or `yes` to return deleted items.
+  - `feedType` (optional): set to `affinity` to read the affinity feed.
+  - `affinity` (optional): alternate switch for affinity (set to `1`, `true`, or `yes`).
+  - `affinityLimit` (optional): max number of affinity fids to include.
+
+### `GET /api/vibeshift/feedAffinity`
+
+- **Purpose**: Read the affinity feed for a single fid with optional pagination.
+- **Query parameters**:
+  - `fid` (required): numeric fid to inspect.
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+  - `deleted` / `onlyDeleted` (optional): set `1`, `true`, or `yes` to return deleted items.
+  - `affinityLimit` (optional): max number of affinity fids to include.
+
+### `POST /api/vibeshift/feedByFids`
+
+- **Purpose**: Read a vibeshift feed composed from an explicit list of fids.
+- **Body options**:
+  - `fids` (required): array of numeric fids (or `fids` query string for GET-style calls).
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+
 ### `GET /api/vibeshift/replies-to-target`
 
 - **Purpose**: List casts that mention/target a fid (e.g., Dickbot) without specifying the source fid, so you can see everything that was replied to that fid.
@@ -193,5 +224,8 @@ Set each bot `name` to the plan name that corresponds to the bot you want to dri
 - `scripts/farcaster-mentions.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/mentions-to-target`, returning every incoming mention to the target fid along with `alreadyReplied`, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
 - `scripts/farcaster-quotes.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/quotes-to-target`, returning every incoming quote to the target fid along with `quotedCast`, `alreadyReplied`, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
 - `scripts/farcaster-thread.sh --fid <fid> --hash <hash> [--limit <0-200>] [--bot <name>]`: Fetches `/api/vibeshift/thread` so the bot can read the parent cast plus replies for context before composing a response.
+- `scripts/vibeshift-feed.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--deleted <true|false>] [--only-deleted <true|false>] [--feed-type <affinity>] [--affinity <true>] [--affinity-limit <n>] [--bot <name>]`: Fetches `/api/vibeshift/feed` with standard or affinity feed parameters.
+- `scripts/vibeshift-feed-affinity.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--deleted <true|false>] [--only-deleted <true|false>] [--affinity-limit <n>] [--bot <name>]`: Fetches `/api/vibeshift/feedAffinity` for affinity feed paging.
+- `scripts/vibeshift-feed-by-fids.sh --fids <fid1,fid2,...> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/feedByFids` for an explicit fid list.
 
 Use the scripts within OpenClaw when you need deterministic HTTP calls; they automatically add `x-api-key` (plan scoped) and the base URL from `config.json`, so you never have to rewrite those headers yourself.
