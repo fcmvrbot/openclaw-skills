@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+unset BASH_ENV
+
 set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 config_file="$script_dir/../config.json"
@@ -89,7 +91,42 @@ params=(--data-urlencode "targetFid=$target_fid")
 [[ -n "$limit" ]] && params+=(--data-urlencode "limit=$limit")
 [[ -n "$cursor" ]] && params+=(--data-urlencode "cursor=$cursor")
 
-curl --fail --show-error -sS \
+response_file="$(mktemp)"
+headers_file="$(mktemp)"
+http_status=""
+
+set +e
+http_status="$(curl --fail --show-error -sS \
   -G "${base_url}/api/vibeshift/replies-to-target" \
   "${params[@]}" \
-  -H "x-api-key: ${api_key}"
+  -H "x-api-key: ${api_key}" \
+  -H "Accept: application/json" \
+  -D "$headers_file" \
+  -o "$response_file" \
+  -w "%{http_code}")"
+curl_exit=$?
+set -e
+
+response_body="$(cat "$response_file")"
+rm -f "$response_file"
+
+if [[ $curl_exit -ne 0 ]]; then
+  printf '{"error":"request_failed","status":%s}' "${http_status:-0}"
+  echo "[farcaster] request failed (curl exit ${curl_exit})" >&2
+  cat "$headers_file" >&2 || true
+  echo "$response_body" >&2
+  rm -f "$headers_file"
+  exit 1
+fi
+
+if ! echo "$response_body" | jq -e . >/dev/null 2>&1; then
+  printf '{"error":"invalid_json","status":%s}' "${http_status:-0}"
+  echo "[farcaster] invalid JSON response" >&2
+  cat "$headers_file" >&2 || true
+  echo "$response_body" >&2
+  rm -f "$headers_file"
+  exit 1
+fi
+
+rm -f "$headers_file"
+echo "$response_body"
