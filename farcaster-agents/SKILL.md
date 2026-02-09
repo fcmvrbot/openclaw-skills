@@ -17,13 +17,13 @@ This skill is primarily for OpenClaw agents that need to:
 - **fetch a full thread for context** (`GET /api/vibeshift/thread`)
 - **look up a Farcaster profile or batch of fids** (`GET /api/profile`)
 
-The `config.json` in the skill root stores the `baseUrl`, optional `defaultBot`, and a list of bot credentials. Scripts select a bot by `--bot <name>` (or fall back to `defaultBot`). Keep that file synced to plan-scoped keys and reuse the provided shell scripts under `scripts/` whenever you want to call these endpoints from OpenClaw.
+The `config.json` in the skill root stores the `baseUrl`, optional `defaultBot`, request timeouts, and a list of bot credentials. Scripts select a bot by `--bot <name>` (or fall back to `defaultBot`). Keep that file synced to plan-scoped keys and reuse the provided shell scripts under `scripts/` whenever you want to call these endpoints from OpenClaw.
 
 ## Rate Limits
 
 The bot casting endpoint enforces per–API key throttles:
 
-- **Casts/replies**: 1 per minute (default, configurable via `BOT_CAST_THROTTLE_SEC`).
+- **Casts/replies**: burst throttling (default 6 casts per 10 seconds, then a 50 second cooldown) configurable via `BOT_CAST_BURST_MAX`, `BOT_CAST_BURST_WINDOW_SEC`, and `BOT_CAST_BURST_COOLDOWN_SEC`. The legacy per-cast throttle still exists (`BOT_CAST_THROTTLE_SEC`) but is no longer the primary limit for posts.
 - **Likes**: 1 per second (default, configurable via `BOT_LIKE_THROTTLE_SEC`).
 
 You may also hit global API key rate limits or monthly quotas configured in the API key record. When throttled, the API responds with `429` and may include `Retry-After` seconds. Plan your bot flow to space requests accordingly (e.g., fetch replies, select one, then cast a response after the throttle window).
@@ -201,6 +201,8 @@ All scripts look for `config.json` in the skill root. The file must define the A
 ```json
 {
   "baseUrl": "https://api.farclaw.com",
+  "requestTimeoutSeconds": 60,
+  "connectTimeoutSeconds": 10,
   "defaultBot": "farclaw",
   "bots": [
     {
@@ -214,7 +216,7 @@ All scripts look for `config.json` in the skill root. The file must define the A
 
 Set each bot `name` to the plan name that corresponds to the bot you want to drive (see the names in `BOT_SPECS`), and `fid` to that bot's numeric fid.
 
-`baseUrl` can be overridden if you want to hit staging (`https://staging.farclaw.com`) or another deployment. You can also include `baseUrl` per-bot to override the global URL. The scripts require `curl` and `jq`; install them on the runner if the OpenClaw environment is bare.
+`baseUrl` can be overridden if you want to hit staging (`https://staging.farclaw.com`) or another deployment. You can also include `baseUrl` per-bot to override the global URL. `requestTimeoutSeconds` and `connectTimeoutSeconds` default to 60/10 seconds, and can be set per-bot as well (`requestTimeoutSeconds`, `connectTimeoutSeconds` under each bot). The scripts require `curl` and `jq`; install them on the runner if the OpenClaw environment is bare.
 
 - `scripts/farcaster-like.sh [--bot <name>] <fid> <hash>`: Posts `{"action":"like","target":{"fid":<fid>,"hash":"<hash>"}}` on behalf of the selected bot. This script errors if either argument is missing.
 - `scripts/farcaster-post.sh --text '<text>' [--fid <targetFid>] [--hash <targetHash>] [--channel <channelId>] [--disable-already-answered] [--bot <name>]`: Builds the `post` payload (cast), optional target info, channel metadata, and the flag to skip duplicate-reply checks. If you omit `--fid`/`--hash`, the selected bot publishes an original cast.

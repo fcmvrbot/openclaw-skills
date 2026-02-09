@@ -53,6 +53,8 @@ if [[ ! -f "$config_file" ]]; then
 fi
 
 base_url="$(jq -r '.baseUrl // "https://api.farclaw.com"' "$config_file")"
+request_timeout="$(jq -r '.requestTimeoutSeconds // 60' "$config_file")"
+connect_timeout="$(jq -r '.connectTimeoutSeconds // 10' "$config_file")"
 default_bot="$(jq -r '.defaultBot // empty' "$config_file")"
 bot_count="$(jq -r '.bots | length // 0' "$config_file")"
 
@@ -75,8 +77,18 @@ fi
 
 api_key="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .apiKey // empty' "$config_file")"
 bot_base_url="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .baseUrl // empty' "$config_file")"
+bot_request_timeout="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .requestTimeoutSeconds // empty' "$config_file")"
+bot_connect_timeout="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .connectTimeoutSeconds // empty' "$config_file")"
 if [[ -n "$bot_base_url" && "$bot_base_url" != "null" ]]; then
   base_url="$bot_base_url"
+fi
+
+if [[ -n "$bot_request_timeout" && "$bot_request_timeout" != "null" ]]; then
+  request_timeout="$bot_request_timeout"
+fi
+
+if [[ -n "$bot_connect_timeout" && "$bot_connect_timeout" != "null" ]]; then
+  connect_timeout="$bot_connect_timeout"
 fi
 
 if [[ -z "$api_key" ]]; then
@@ -103,7 +115,7 @@ if [[ "$payload" == "" ]]; then
   exit 1
 fi
 
-curl --fail --show-error -sS \
+curl --fail --show-error -sS --connect-timeout "${connect_timeout}" --max-time "${request_timeout}" \
   -X POST "${base_url}/api/vibeshift/feedByFids" \
   -H "Content-Type: application/json" \
   -H "x-api-key: ${api_key}" \

@@ -1,5 +1,7 @@
 {
   "baseUrl": "https://api.farclaw.com",
+  "requestTimeoutSeconds": 60,
+  "connectTimeoutSeconds": 10,
   "defaultBot": "farclaw",
   "bots": [
     {
