@@ -100,6 +100,7 @@ scripts/farcaster-post.sh --text "Hey @name — thanks for the question..." --fi
 ```
 
 Note: `farcaster-post` creates a cast (Farcaster post). Use `--fid` + `--hash` to reply to a specific cast; omit them to post a new cast.
+
 ## Endpoints
 
 ### `POST /api/farcaster/bots/{fid}`
@@ -113,8 +114,11 @@ Note: `farcaster-post` creates a cast (Farcaster post). Use `--fid` + `--hash` t
 - `userData`: required when `action="user_data_add"` with `{ type, value }`. `type` accepts numeric enum values or enum-like strings (for example `USER_DATA_TYPE_BIO`, `bio`).
   Supported types:
   `USER_DATA_TYPE_NONE` (0), `USER_DATA_TYPE_PFP` (1), `USER_DATA_TYPE_DISPLAY` (2), `USER_DATA_TYPE_BIO` (3), `USER_DATA_TYPE_URL` (5), `USER_DATA_TYPE_USERNAME` (6), `USER_DATA_TYPE_LOCATION` (7), `USER_DATA_TYPE_TWITTER` (8), `USER_DATA_TYPE_GITHUB` (9), `USER_DATA_TYPE_BANNER` (10).
-- `embedUrls[]`: optional array of URLs to embed (max 2 total links).
+- `embeds[]`: optional array of URLs to embed (max 2 total links).
 - `channelId`: optional Warpcast channel slug when posting to a channel (`replyOrCast` passes this through).
+- `tokenCast`: optional token parent context for token-channel casts, shape `{ chain, chainId, address }`.
+  Use `chain: "solana"` with `parentUrl` form `solana:<chainId>/address:<address>`, or EVM with `chain: "eip155"` where the helper converts to CAIP-19 (for example `eip155:8453/erc20:0x...`).
+  If both `channelId` and `tokenCast` are present, `channelId` takes precedence.
 - `disableAlreadyAnsweredCheck`: optional boolean to skip the Redis “already replied” guard.
 
 The service returns the hub response directly (e.g., `{ status, data }` from hub submission). For likes the `data` can be `null`; a `200` means Warpcast accepted the reaction even if no body is returned.
@@ -228,7 +232,7 @@ Set each bot `name` to the plan name that corresponds to the bot you want to dri
 - `scripts/farcaster-user-data-add.sh --type <type> --value '<value>' [--bot <name>]`: Posts `{"action":"user_data_add","userData":{"type":...,"value":"..."}}` to update bot profile/user data fields.
 - `scripts/profile.sh --fid <fid> | --name <name> | --wallet <wallet> | --fids <fid1,fid2,...> [--token-ca <tokenCA>] [--bot <name>]`: Covers every lookup route described above. Use `--token-ca` only when you pair it with `--fid`.
 - `scripts/latest-casts.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--since <cursorOrDate>] [--include-replies false] [--replies-only] [--bot <name>]`: Fetches the vibeshift feed with optional pagination and reply filtering so you can display the last casts that Dickbot might reply to.
-- `scripts/farcaster-replies.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/replies-to-target`, returning every incoming reply to the target fid along with the parent cast, `alreadyReplied` flag, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page. 
+- `scripts/farcaster-replies.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/replies-to-target`, returning every incoming reply to the target fid along with the parent cast, `alreadyReplied` flag, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
 - `scripts/farcaster-mentions.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/mentions-to-target`, returning every incoming mention to the target fid along with `alreadyReplied`, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
 - `scripts/farcaster-quotes.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/quotes-to-target`, returning every incoming quote to the target fid along with `quotedCast`, `alreadyReplied`, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
 - `scripts/farcaster-thread.sh --fid <fid> --hash <hash> [--limit <0-200>] [--bot <name>]`: Fetches `/api/vibeshift/thread` so the bot can read the parent cast plus replies for context before composing a response.
