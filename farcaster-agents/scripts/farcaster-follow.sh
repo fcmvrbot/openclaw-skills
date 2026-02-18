@@ -8,46 +8,41 @@ config_file="$script_dir/../config.json"
 
 usage() {
   cat <<'EOF' >&2
-Usage: farcaster-quotes.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]
+Usage: farcaster-follow.sh [--bot <name>] [--unfollow] <target_fid>
 
-Returns quotes whose target is the supplied fid via /api/vibeshift/quotes-to-target.
+Follows (default) or unfollows (--unfollow) the target fid on behalf of the configured bot.
 EOF
   exit 1
 }
 
-target_fid=""
-limit=""
-cursor=""
 bot_name=""
+action="follow"
+positional=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --target-fid)
-      shift
-      target_fid="$1"
-      ;;
-    --limit)
-      shift
-      limit="$1"
-      ;;
-    --cursor)
-      shift
-      cursor="$1"
-      ;;
     --bot)
       shift
       bot_name="$1"
       ;;
+    --unfollow)
+      action="unfollow"
+      ;;
     *)
-      usage
+      positional+=("$1")
       ;;
   esac
   shift || break
 done
 
-if [[ -z "$target_fid" ]]; then
-  echo "target-fid is required" >&2
+if [[ ${#positional[@]} -ne 1 ]]; then
   usage
+fi
+
+target_fid="${positional[0]}"
+if [[ ! "$target_fid" =~ ^[0-9]+$ ]]; then
+  echo "target_fid must be a positive number" >&2
+  exit 1
 fi
 
 if [[ ! -f "$config_file" ]]; then
@@ -55,7 +50,7 @@ if [[ ! -f "$config_file" ]]; then
   exit 1
 fi
 
-base_url="$(jq -r '.baseUrl // "https://onchain.cooking"' "$config_file")"
+base_url="$(jq -r '.baseUrl // "https://api.farclaw.com"' "$config_file")"
 request_timeout="$(jq -r '.requestTimeoutSeconds // 60' "$config_file")"
 connect_timeout="$(jq -r '.connectTimeoutSeconds // 10' "$config_file")"
 default_bot="$(jq -r '.defaultBot // empty' "$config_file")"
@@ -79,6 +74,7 @@ if [[ -z "$bot_entry" ]]; then
 fi
 
 api_key="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .apiKey // empty' "$config_file")"
+bot_fid="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .fid // empty' "$config_file")"
 bot_base_url="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .baseUrl // empty' "$config_file")"
 bot_request_timeout="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .requestTimeoutSeconds // empty' "$config_file")"
 bot_connect_timeout="$(jq -r --arg name "$bot_name" '.bots[] | select(.name == $name) | .connectTimeoutSeconds // empty' "$config_file")"
@@ -99,11 +95,24 @@ if [[ -z "$api_key" ]]; then
   exit 1
 fi
 
-params=(--data-urlencode "targetFid=$target_fid")
-[[ -n "$limit" ]] && params+=(--data-urlencode "limit=$limit")
-[[ -n "$cursor" ]] && params+=(--data-urlencode "cursor=$cursor")
+if [[ -z "$bot_fid" ]]; then
+  echo "fid missing for bot '$bot_name' in config.json" >&2
+  exit 1
+fi
+
+if ! [[ "$bot_fid" =~ ^[0-9]+$ ]]; then
+  echo "fid must be a positive number in config.json" >&2
+  exit 1
+fi
+
+payload="$(jq -n \
+  --arg action "$action" \
+  --argjson targetFid "$target_fid" \
+  '{action: $action, target: { fid: $targetFid }}'
+)"
 
 curl --fail --show-error -sS --connect-timeout "${connect_timeout}" --max-time "${request_timeout}" \
-  -G "${base_url}/api/vibeshift/quotes-to-target" \
-  "${params[@]}" \
-  -H "x-api-key: ${api_key}"
+  -X POST "${base_url}/api/farcaster/bots/${bot_fid}" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: ${api_key}" \
+  -d "$payload"

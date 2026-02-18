@@ -55,7 +55,7 @@ if [[ ! -f "$config_file" ]]; then
   exit 1
 fi
 
-base_url="$(jq -r '.baseUrl // "https://ham.cooking"' "$config_file")"
+base_url="$(jq -r '.baseUrl // "https://farclaw.com"' "$config_file")"
 request_timeout="$(jq -r '.requestTimeoutSeconds // 60' "$config_file")"
 connect_timeout="$(jq -r '.connectTimeoutSeconds // 10' "$config_file")"
 default_bot="$(jq -r '.defaultBot // empty' "$config_file")"

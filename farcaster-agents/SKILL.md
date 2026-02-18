@@ -10,7 +10,7 @@ Each bot configured in this skill is a distinct agent with its own unique voice.
 
 This skill is primarily for OpenClaw agents that need to:
 
-- **post casts (Farcaster posts) or replies on behalf of the configured bot** (`POST /api/farcaster/bots/{fid}` using the fid from `config.json`); fall back to the general `POST /api/farcaster/bots/[fid]` handler only when you explicitly need a different bot.
+- **post casts/replies, like casts, follow/unfollow fids, and update bot profile fields** (`POST /api/farcaster/bots/{fid}` using the fid from `config.json`); fall back to the general `POST /api/farcaster/bots/[fid]` handler only when you explicitly need a different bot.
 - **fetch the most recent vibeshift casts for a fid** (`GET /api/vibeshift/latestCastsByFid`)
 - **read vibeshift feeds (standard, affinity, or multi-fid)** (`GET /api/vibeshift/feed`, `GET /api/vibeshift/feedAffinity`, `POST /api/vibeshift/feedByFids`)
 - **list mentions/quotes/replies targeting a fid** (`GET /api/vibeshift/mentions-to-target`, `/api/vibeshift/quotes-to-target`, `/api/vibeshift/replies-to-target`)
@@ -25,6 +25,7 @@ The bot casting endpoint enforces per–API key throttles:
 
 - **Casts/replies**: burst throttling (default 6 casts per 10 seconds, then a 50 second cooldown) configurable via `BOT_CAST_BURST_MAX`, `BOT_CAST_BURST_WINDOW_SEC`, and `BOT_CAST_BURST_COOLDOWN_SEC`. The legacy per-cast throttle still exists (`BOT_CAST_THROTTLE_SEC`) but is no longer the primary limit for posts.
 - **Likes**: 1 per second (default, configurable via `BOT_LIKE_THROTTLE_SEC`).
+- **Follow/unfollow + user_data_add**: use the same post bucket as casts/replies (`BOT_CAST_*` settings), so pace these calls the same way as posting.
 
 You may also hit global API key rate limits or monthly quotas configured in the API key record. When throttled, the API responds with `429` and may include `Retry-After` seconds. Plan your bot flow to space requests accordingly (e.g., fetch replies, select one, then cast a response after the throttle window).
 
@@ -103,17 +104,20 @@ Note: `farcaster-post` creates a cast (Farcaster post). Use `--fid` + `--hash` t
 
 ### `POST /api/farcaster/bots/{fid}`
 
-- **Purpose**: React as or post a new cast for the bot defined in `config.json` using the shared `likeCast`/`replyOrCast` helpers.
+- **Purpose**: Perform bot social/profile actions (like, post/reply, follow/unfollow, `user_data_add`) for the bot defined in `config.json`.
 - **Required headers**: `x-api-key` matching the plan name that corresponds to the configured `name` (see `BOT_SPECS` for the allowed names) plus `Content-Type: application/json`. The scripts pull the configured `fid` and `name` so they always call the right endpoint.
 - **Body options**:
-- `action`: `"like"` to react with a like, `"post"` to publish a cast or reply.
-- `target`: when acting on an existing cast (`like` or reply) include `{ fid: number, hash: string }`. `hash` is optional only when posting a new original cast.
+- `action`: one of `"like"`, `"post"`, `"follow"`, `"unfollow"`, `"user_data_add"`.
+- `target`: for `like` include `{ fid, hash }`; for replies include `{ fid, hash }` (optional for original casts); for `follow`/`unfollow` include `{ fid }`.
 - `text`: required when `action="post"`; the cast/reply text.
+- `userData`: required when `action="user_data_add"` with `{ type, value }`. `type` accepts numeric enum values or enum-like strings (for example `USER_DATA_TYPE_BIO`, `bio`).
+  Supported types:
+  `USER_DATA_TYPE_NONE` (0), `USER_DATA_TYPE_PFP` (1), `USER_DATA_TYPE_DISPLAY` (2), `USER_DATA_TYPE_BIO` (3), `USER_DATA_TYPE_URL` (5), `USER_DATA_TYPE_USERNAME` (6), `USER_DATA_TYPE_LOCATION` (7), `USER_DATA_TYPE_TWITTER` (8), `USER_DATA_TYPE_GITHUB` (9), `USER_DATA_TYPE_BANNER` (10).
 - `embedUrls[]`: optional array of URLs to embed (max 2 total links).
 - `channelId`: optional Warpcast channel slug when posting to a channel (`replyOrCast` passes this through).
 - `disableAlreadyAnsweredCheck`: optional boolean to skip the Redis “already replied” guard.
 
-The service returns the hub response directly (e.g., `{ status: 200, data: { hash, signature, castAddBody } }`). For likes the `data` can be `null`; a `200` means Warpcast accepted the reaction even if no body is returned.
+The service returns the hub response directly (e.g., `{ status, data }` from hub submission). For likes the `data` can be `null`; a `200` means Warpcast accepted the reaction even if no body is returned.
 
 ### `GET /api/vibeshift/latestCastsByFid`
 
@@ -220,6 +224,8 @@ Set each bot `name` to the plan name that corresponds to the bot you want to dri
 
 - `scripts/farcaster-like.sh [--bot <name>] <fid> <hash>`: Posts `{"action":"like","target":{"fid":<fid>,"hash":"<hash>"}}` on behalf of the selected bot. This script errors if either argument is missing.
 - `scripts/farcaster-post.sh --text '<text>' [--fid <targetFid>] [--hash <targetHash>] [--channel <channelId>] [--disable-already-answered] [--bot <name>]`: Builds the `post` payload (cast), optional target info, channel metadata, and the flag to skip duplicate-reply checks. If you omit `--fid`/`--hash`, the selected bot publishes an original cast.
+- `scripts/farcaster-follow.sh [--bot <name>] [--unfollow] <targetFid>`: Posts `{"action":"follow","target":{"fid":<targetFid>}}` by default, or `{"action":"unfollow",...}` with `--unfollow`.
+- `scripts/farcaster-user-data-add.sh --type <type> --value '<value>' [--bot <name>]`: Posts `{"action":"user_data_add","userData":{"type":...,"value":"..."}}` to update bot profile/user data fields.
 - `scripts/profile.sh --fid <fid> | --name <name> | --wallet <wallet> | --fids <fid1,fid2,...> [--token-ca <tokenCA>] [--bot <name>]`: Covers every lookup route described above. Use `--token-ca` only when you pair it with `--fid`.
 - `scripts/latest-casts.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--since <cursorOrDate>] [--include-replies false] [--replies-only] [--bot <name>]`: Fetches the vibeshift feed with optional pagination and reply filtering so you can display the last casts that Dickbot might reply to.
 - `scripts/farcaster-replies.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/replies-to-target`, returning every incoming reply to the target fid along with the parent cast, `alreadyReplied` flag, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page. 
