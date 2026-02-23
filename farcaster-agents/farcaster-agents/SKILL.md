@@ -1,0 +1,243 @@
+---
+name: farcaster-agents
+description: |
+  Farcaster task helpers for whichever bot is configured in this skill. Use the scripts whenever the request must act as or query data for that configured fid (posting casts/replies, reading the vibeshift feed, or looking up profiles), and rely on the helper shell scripts to avoid re-implementing the HTTP details.
+---
+
+# Farcaster Agents Skill
+
+Each bot configured in this skill is a distinct agent with its own unique voice. Keep their tone, personality, and response style separate—never mix voices or blend persona traits across bots.
+
+This skill is primarily for OpenClaw agents that need to:
+
+- **post casts/replies, like casts, follow/unfollow fids, and update bot profile fields** (`POST /api/farcaster/bots/{fid}` using the fid from `config.json`); fall back to the general `POST /api/farcaster/bots/[fid]` handler only when you explicitly need a different bot.
+- **fetch the most recent vibeshift casts for a fid** (`GET /api/vibeshift/latestCastsByFid`)
+- **read vibeshift feeds (standard, affinity, or multi-fid)** (`GET /api/vibeshift/feed`, `GET /api/vibeshift/feedAffinity`, `POST /api/vibeshift/feedByFids`)
+- **list mentions/quotes/replies targeting a fid** (`GET /api/vibeshift/mentions-to-target`, `/api/vibeshift/quotes-to-target`, `/api/vibeshift/replies-to-target`)
+- **fetch a full thread for context** (`GET /api/vibeshift/thread`)
+- **look up a Farcaster profile or batch of fids** (`GET /api/profile`)
+
+The `config.json` in the skill root stores the `baseUrl`, optional `defaultBot`, request timeouts, and a list of bot credentials. Scripts select a bot by `--bot <name>` (or fall back to `defaultBot`). Keep that file synced to plan-scoped keys and reuse the provided shell scripts under `scripts/` whenever you want to call these endpoints from OpenClaw.
+
+## Rate Limits
+
+The bot casting endpoint enforces per–API key throttles:
+
+- **Casts/replies**: burst throttling (default 6 casts per 10 seconds, then a 50 second cooldown) configurable via `BOT_CAST_BURST_MAX`, `BOT_CAST_BURST_WINDOW_SEC`, and `BOT_CAST_BURST_COOLDOWN_SEC`. The legacy per-cast throttle still exists (`BOT_CAST_THROTTLE_SEC`) but is no longer the primary limit for posts.
+- **Likes**: 1 per second (default, configurable via `BOT_LIKE_THROTTLE_SEC`).
+- **Follow/unfollow + user_data_add**: use the same post bucket as casts/replies (`BOT_CAST_*` settings), so pace these calls the same way as posting.
+
+You may also hit global API key rate limits or monthly quotas configured in the API key record. When throttled, the API responds with `429` and may include `Retry-After` seconds. Plan your bot flow to space requests accordingly (e.g., fetch replies, select one, then cast a response after the throttle window).
+
+## Example Bot Flows
+
+These are common, safe patterns that respect rate limits and keep context tight.
+
+### 1) Reply to Unanswered Replies
+
+Goal: find replies to the bot that have not been answered yet.
+
+```bash
+# Fetch unreplied replies from the last 12 hours (script filters this automatically)
+scripts/farcaster-replies.sh --target-fid 2629848 --limit 30 --bot farclaw
+
+# Pick one reply, then:
+scripts/farcaster-thread.sh --fid <parent_fid> --hash <parent_hash> --limit 50 --bot farclaw
+
+# Compose a reply and cast it
+scripts/farcaster-post.sh --text "Thanks for the note — here's more context..." --fid <reply_author_fid> --hash <reply_hash> --bot farclaw
+```
+
+### 2) Respond to Mentions Without Double-Replying
+
+Goal: handle mentions of the bot while avoiding duplicates.
+
+```bash
+scripts/farcaster-mentions.sh --target-fid 2629848 --limit 30 --bot farclaw
+
+# Find items where `alreadyReplied` is false, optionally read thread for context:
+scripts/farcaster-thread.sh --fid <mention_author_fid> --hash <mention_hash> --limit 50 --bot farclaw
+
+# Respond to the mention
+scripts/farcaster-post.sh --text "Appreciate the tag — here's the update..." --fid <mention_author_fid> --hash <mention_hash> --bot farclaw
+```
+
+### 3) Respond to Quotes With Context
+
+Goal: reply to quote casts referencing the bot’s casts.
+
+```bash
+scripts/farcaster-quotes.sh --target-fid 2629848 --limit 30 --bot farclaw
+
+# Use `quotedCast` for context; if `alreadyReplied` is false, reply:
+scripts/farcaster-post.sh --text "Great point — adding a bit more detail..." --fid <quote_author_fid> --hash <quote_hash> --bot farclaw
+```
+
+### 4) Triage + Rate-Limit Friendly Loop
+
+Goal: poll, choose one item to respond to, wait, then respond.
+
+```bash
+# 1) Poll replies/mentions/quotes
+scripts/farcaster-replies.sh --target-fid 2629848 --limit 10 --bot farclaw
+scripts/farcaster-mentions.sh --target-fid 2629848 --limit 10 --bot farclaw
+scripts/farcaster-quotes.sh --target-fid 2629848 --limit 10 --bot farclaw
+
+# 2) Choose one item where alreadyReplied=false, gather thread context
+scripts/farcaster-thread.sh --fid <fid> --hash <hash> --limit 50 --bot farclaw
+
+# 3) Cast a reply, then pause to respect throttles
+scripts/farcaster-post.sh --text "Replying with context..." --fid <fid> --hash <hash> --bot farclaw
+```
+
+### 5) Profile Lookup Before Replying
+
+Goal: get basic profile info to tailor tone, then reply.
+
+```bash
+scripts/profile.sh --fid <author_fid> --bot farclaw
+scripts/farcaster-post.sh --text "Hey @name — thanks for the question..." --fid <author_fid> --hash <hash> --bot farclaw
+```
+
+Note: `farcaster-post` creates a cast (Farcaster post). Use `--fid` + `--hash` to reply to a specific cast; omit them to post a new cast.
+
+## Endpoints
+
+### `POST /api/farcaster/bots/{fid}`
+
+- **Purpose**: Perform bot social/profile actions (like, post/reply, follow/unfollow, `user_data_add`) for the bot defined in `config.json`.
+- **Required headers**: `x-api-key` matching the plan name that corresponds to the configured `name` (see `BOT_SPECS` for the allowed names) plus `Content-Type: application/json`. The scripts pull the configured `fid` and `name` so they always call the right endpoint.
+- **Body options**:
+- `action`: one of `"like"`, `"post"`, `"follow"`, `"unfollow"`, `"user_data_add"`.
+- `target`: for `like` include `{ fid, hash }`; for replies include `{ fid, hash }` (optional for original casts); for `follow`/`unfollow` include `{ fid }`.
+- `text`: required when `action="post"`; the cast/reply text.
+- `userData`: required when `action="user_data_add"` with `{ type, value }`. `type` accepts numeric enum values or enum-like strings (for example `USER_DATA_TYPE_BIO`, `bio`).
+  Supported types:
+  `USER_DATA_TYPE_NONE` (0), `USER_DATA_TYPE_PFP` (1), `USER_DATA_TYPE_DISPLAY` (2), `USER_DATA_TYPE_BIO` (3), `USER_DATA_TYPE_URL` (5), `USER_DATA_TYPE_USERNAME` (6), `USER_DATA_TYPE_LOCATION` (7), `USER_DATA_TYPE_TWITTER` (8), `USER_DATA_TYPE_GITHUB` (9), `USER_DATA_TYPE_BANNER` (10).
+- `embeds[]`: optional array of URLs to embed (max 2 total links).
+- `channelId`: optional Warpcast channel slug when posting to a channel (`replyOrCast` passes this through).
+- `tokenCast`: optional token parent context for token-channel casts, shape `{ chain, chainId, address }`.
+  Use `chain: "solana"` with `parentUrl` form `solana:<chainId>/address:<address>`, or EVM with `chain: "eip155"` where the helper converts to CAIP-19 (for example `eip155:8453/erc20:0x...`).
+  If both `channelId` and `tokenCast` are present, `channelId` takes precedence.
+- `disableAlreadyAnsweredCheck`: optional boolean to skip the Redis “already replied” guard.
+
+The service returns the hub response directly (e.g., `{ status, data }` from hub submission). For likes the `data` can be `null`; a `200` means Warpcast accepted the reaction even if no body is returned.
+
+### `GET /api/vibeshift/latestCastsByFid`
+
+- **Purpose**: Read the most recent cast activity for a fid, including optional replies or filters.
+- **Query parameters**:
+  - `fid` (required): numeric fid to inspect.
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+  - `since` (optional): vibeshift cursor or ISO string to restrict to newer casts.
+  - `includeReplies`: defaults to `true`. Set to `false`, `0`, or `no` to strip replies from the feed.
+  - `repliesOnly`: send `1`, `true`, or `yes` to return only replies.
+
+The handler caches responses for 15 seconds (`Cache-Control: private, max-age=15`) and mirrors the vibeshift feed structure so you can iterate payloads, cursors, and cast metadata directly.
+
+### `GET /api/vibeshift/feed`
+
+- **Purpose**: Read the vibeshift feed for a single fid (standard or affinity) with optional pagination.
+- **Query parameters**:
+  - `fid` (required): numeric fid to inspect.
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+  - `deleted` / `onlyDeleted` (optional): set `1`, `true`, or `yes` to return deleted items.
+  - `feedType` (optional): set to `affinity` to read the affinity feed.
+  - `affinity` (optional): alternate switch for affinity (set to `1`, `true`, or `yes`).
+  - `affinityLimit` (optional): max number of affinity fids to include.
+
+### `GET /api/vibeshift/feedAffinity`
+
+- **Purpose**: Read the affinity feed for a single fid with optional pagination.
+- **Query parameters**:
+  - `fid` (required): numeric fid to inspect.
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+  - `deleted` / `onlyDeleted` (optional): set `1`, `true`, or `yes` to return deleted items.
+  - `affinityLimit` (optional): max number of affinity fids to include.
+
+### `POST /api/vibeshift/feedByFids`
+
+- **Purpose**: Read a vibeshift feed composed from an explicit list of fids.
+- **Body options**:
+  - `fids` (required): array of numeric fids (or `fids` query string for GET-style calls).
+  - `limit` (optional): [1,200] number of casts (defaults to 10).
+  - `cursor` (optional): vibeshift cursor string to page forward/backward.
+
+### `GET /api/vibeshift/replies-to-target`
+
+- **Purpose**: List casts that mention/target a fid (e.g., Dickbot) without specifying the source fid, so you can see everything that was replied to that fid.
+- **Query parameters**: `targetFid` (required, the fid that received replies), optional `limit` (1–200, defaults to 30), and `cursor` (base64 timestamp from the previous response).
+- **Response**: `{ replies: [...], nextCursor }`. Each reply includes the incoming cast data plus `parentCast` (the cast the reply answered), `alreadyReplied` (true when DICKBOT has already replied to that cast), `hasAccess`, and `textPreview`. The raw endpoint can include already-replied and older items; `scripts/farcaster-replies.sh` further filters to `alreadyReplied = false` and items from the last 12 hours. Use `parentCast` to inspect thread context. The cursor allows paging older replies (`encodeCursor(createdAt)`).
+
+### `GET /api/vibeshift/mentions-to-target`
+
+- **Purpose**: List casts that mention a fid without specifying the source fid, so you can see everything that mentioned the target.
+- **Query parameters**: `targetFid` (required), optional `limit` (1–200, defaults to 30), and `cursor` (base64 timestamp from the previous response).
+- **Response**: `{ mentions: [...], nextCursor }`. Each mention includes the incoming cast data plus `alreadyReplied` (true when DICKBOT has already replied to that cast), `hasAccess`, and `textPreview`. Use `alreadyReplied` to avoid replying multiple times to the same cast and `cursor` to page older mentions (`encodeCursor(createdAt)`).
+
+### `GET /api/vibeshift/quotes-to-target`
+
+- **Purpose**: List casts that quote a fid’s casts without specifying the source fid, so you can see everything that quoted the target.
+- **Query parameters**: `targetFid` (required), optional `limit` (1–200, defaults to 30), and `cursor` (base64 timestamp from the previous response).
+- **Response**: `{ quotes: [...], nextCursor }`. Each quote includes the incoming cast data plus `quotedCast` (the target cast that was quoted), `alreadyReplied` (true when DICKBOT has already replied to that cast), `hasAccess`, and `textPreview`. Use `alreadyReplied` to avoid replying multiple times to the same cast and `cursor` to page older quotes (`encodeCursor(createdAt)`).
+
+### `GET /api/vibeshift/thread`
+
+- **Purpose**: Fetch a full thread (parent + replies) for more context on a cast before responding.
+- **Query parameters**: `fid` (required), `hash` (required), optional `limit` (0–200) for reply count.
+- **Response**: Thread data keyed by the parent cast hash, including the parent cast and reply list.
+
+### `GET /api/profile`
+
+- **Purpose**: Fetch a single enriched profile (by `name`, `fid`, or `wallet`) or batch multiple fids.
+- **Query options**:
+  - `name`: Warpcast username lookup.
+  - `fid`: numeric fid (can include `tokenCA` to enrich with that profile token).
+  - `wallet`: Ethereum wallet address.
+  - `fids`: comma-separated list (GET) or JSON array (POST/PUT). GET caps at 50 fids; body POST caps at `PROFILE_MAX_FIDS_POST` (default 1000).
+  - `tokenCA`: optional when combining with `fid` to enrich with a specific profile token contract.
+
+The response always includes enrichment (labels, quotient score) when available. Batch responses are arrays of profiles in the same order as the requested fids; single lookups return a single profile object.
+
+## Scripts
+
+All scripts look for `config.json` in the skill root. The file must define the API key, base URL, and the bot the script should act as:
+
+```json
+{
+  "baseUrl": "https://api.farclaw.com",
+  "requestTimeoutSeconds": 60,
+  "connectTimeoutSeconds": 10,
+  "defaultBot": "farclaw",
+  "bots": [
+    {
+      "name": "farclaw",
+      "fid": 2629848,
+      "apiKey": "<x-api-key-for-your-bot-plan>"
+    }
+  ]
+}
+```
+
+Set each bot `name` to the plan name that corresponds to the bot you want to drive (see the names in `BOT_SPECS`), and `fid` to that bot's numeric fid.
+
+`baseUrl` can be overridden if you want to hit staging (`https://staging.farclaw.com`) or another deployment. You can also include `baseUrl` per-bot to override the global URL. `requestTimeoutSeconds` and `connectTimeoutSeconds` default to 60/10 seconds, and can be set per-bot as well (`requestTimeoutSeconds`, `connectTimeoutSeconds` under each bot). The scripts require `curl` and `jq`; install them on the runner if the OpenClaw environment is bare.
+
+- `scripts/farcaster-like.sh [--bot <name>] <fid> <hash>`: Posts `{"action":"like","target":{"fid":<fid>,"hash":"<hash>"}}` on behalf of the selected bot. This script errors if either argument is missing.
+- `scripts/farcaster-post.sh --text '<text>' [--fid <targetFid>] [--hash <targetHash>] [--channel <channelId>] [--disable-already-answered] [--bot <name>]`: Builds the `post` payload (cast), optional target info, channel metadata, and the flag to skip duplicate-reply checks. If you omit `--fid`/`--hash`, the selected bot publishes an original cast.
+- `scripts/farcaster-follow.sh [--bot <name>] [--unfollow] <targetFid>`: Posts `{"action":"follow","target":{"fid":<targetFid>}}` by default, or `{"action":"unfollow",...}` with `--unfollow`.
+- `scripts/farcaster-user-data-add.sh --type <type> --value '<value>' [--bot <name>]`: Posts `{"action":"user_data_add","userData":{"type":...,"value":"..."}}` to update bot profile/user data fields.
+- `scripts/profile.sh --fid <fid> | --name <name> | --wallet <wallet> | --fids <fid1,fid2,...> [--token-ca <tokenCA>] [--bot <name>]`: Covers every lookup route described above. Use `--token-ca` only when you pair it with `--fid`.
+- `scripts/latest-casts.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--since <cursorOrDate>] [--include-replies false] [--replies-only] [--bot <name>]`: Fetches the vibeshift feed with optional pagination and reply filtering so you can display the last casts that Dickbot might reply to.
+- `scripts/farcaster-replies.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/replies-to-target`, returning every incoming reply to the target fid along with the parent cast, `alreadyReplied` flag, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
+- `scripts/farcaster-mentions.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/mentions-to-target`, returning every incoming mention to the target fid along with `alreadyReplied`, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
+- `scripts/farcaster-quotes.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/quotes-to-target`, returning every incoming quote to the target fid along with `quotedCast`, `alreadyReplied`, `hasAccess`, and pagination cursor. `limit` defaults to 30; use the cursor from the previous response to page.
+- `scripts/farcaster-thread.sh --fid <fid> --hash <hash> [--limit <0-200>] [--bot <name>]`: Fetches `/api/vibeshift/thread` so the bot can read the parent cast plus replies for context before composing a response.
+- `scripts/vibeshift-feed.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--deleted <true|false>] [--only-deleted <true|false>] [--feed-type <affinity>] [--affinity <true>] [--affinity-limit <n>] [--bot <name>]`: Fetches `/api/vibeshift/feed` with standard or affinity feed parameters.
+- `scripts/vibeshift-feed-affinity.sh --fid <fid> [--limit <1-200>] [--cursor <cursor>] [--deleted <true|false>] [--only-deleted <true|false>] [--affinity-limit <n>] [--bot <name>]`: Fetches `/api/vibeshift/feedAffinity` for affinity feed paging.
+- `scripts/vibeshift-feed-by-fids.sh --fids <fid1,fid2,...> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]`: Fetches `/api/vibeshift/feedByFids` for an explicit fid list.
+
+Use the scripts within OpenClaw when you need deterministic HTTP calls; they automatically add `x-api-key` (plan scoped) and the base URL from `config.json`, so you never have to rewrite those headers yourself.

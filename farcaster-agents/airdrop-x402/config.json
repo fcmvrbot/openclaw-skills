@@ -1,0 +1,16 @@
+{
+  "baseUrl": "https://api.farclaw.com",
+  "requestTimeoutSeconds": 60,
+  "connectTimeoutSeconds": 10,
+  "defaultClient": "shared",
+  "clients": [
+    {
+      "name": "shared",
+      "apiKey": "xxx-your-api-key-xxx"
+    },
+    {
+      "name": "paidproof",
+      "x402Proof": "xxx-your-x402-proof-header-value-xxx"
+    }
+  ]
+}
