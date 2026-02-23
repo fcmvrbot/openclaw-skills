@@ -38,10 +38,10 @@ These are common, safe patterns that respect rate limits and keep context tight.
 Goal: find replies to the bot that have not been answered yet.
 
 ```bash
-# Fetch latest replies to the bot fid
+# Fetch unreplied replies from the last 12 hours (script filters this automatically)
 scripts/farcaster-replies.sh --target-fid 2629848 --limit 30 --bot farclaw
 
-# Filter `replies` where `alreadyReplied` is false, pick one, then:
+# Pick one reply, then:
 scripts/farcaster-thread.sh --fid <parent_fid> --hash <parent_hash> --limit 50 --bot farclaw
 
 # Compose a reply and cast it
@@ -170,7 +170,7 @@ The handler caches responses for 15 seconds (`Cache-Control: private, max-age=15
 
 - **Purpose**: List casts that mention/target a fid (e.g., Dickbot) without specifying the source fid, so you can see everything that was replied to that fid.
 - **Query parameters**: `targetFid` (required, the fid that received replies), optional `limit` (1–200, defaults to 30), and `cursor` (base64 timestamp from the previous response).
-- **Response**: `{ replies: [...], nextCursor }`. Each reply includes the incoming cast data plus `parentCast` (the cast the reply answered), `alreadyReplied` (true when DICKBOT has already replied to that cast), `hasAccess`, and `textPreview`. Use `alreadyReplied` to avoid replying multiple times to the same cast and `parentCast` to inspect the original thread context. The cursor allows paging older replies (`encodeCursor(createdAt)`).
+- **Response**: `{ replies: [...], nextCursor }`. Each reply includes the incoming cast data plus `parentCast` (the cast the reply answered), `alreadyReplied` (true when DICKBOT has already replied to that cast), `hasAccess`, and `textPreview`. The raw endpoint can include already-replied and older items; `scripts/farcaster-replies.sh` further filters to `alreadyReplied = false` and items from the last 12 hours. Use `parentCast` to inspect thread context. The cursor allows paging older replies (`encodeCursor(createdAt)`).
 
 ### `GET /api/vibeshift/mentions-to-target`
 

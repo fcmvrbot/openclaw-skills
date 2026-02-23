@@ -10,7 +10,8 @@ usage() {
   cat <<'EOF' >&2
 Usage: farcaster-replies.sh --target-fid <fid> [--limit <1-200>] [--cursor <cursor>] [--bot <name>]
 
-Returns replies whose target is the supplied fid via /api/vibeshift/replies-to-target.
+Returns replies whose target is the supplied fid via /api/vibeshift/replies-to-target,
+filtered to unreplied items from the last 12 hours.
 EOF
   exit 1
 }
@@ -106,4 +107,17 @@ params=(--data-urlencode "targetFid=$target_fid")
 curl --fail --show-error -sS --connect-timeout "${connect_timeout}" --max-time "${request_timeout}" \
   -G "${base_url}/api/vibeshift/replies-to-target" \
   "${params[@]}" \
-  -H "x-api-key: ${api_key}"
+  -H "x-api-key: ${api_key}" \
+| jq '
+  . as $root
+  | ((now - (12 * 60 * 60)) * 1000 | floor) as $min_ts_ms
+  | {
+      replies: [
+        (.replies // [])
+        | .[]
+        | select((.alreadyReplied // false) | not)
+        | select((.timestamp // 0) >= $min_ts_ms)
+      ],
+      nextCursor: ($root.nextCursor // null)
+    }
+'
