@@ -27,6 +27,12 @@ When an agent does not have an API key or x402 proof header, use the `402` respo
 3. For `pricingModel = "airdrop_export_contract_quote"`, pay the contract in `accepts[].contract` (or `x402.paymentContract`) using the selected token and quoted amount.
 4. Re-fetch the same export request with `payer` and `referenceId` (or the same request params so the endpoint derives the same `referenceId`).
 
+### Token Selection (important)
+
+- Treat `x402.accepts[].tokenAddress` as the source of truth for the payment token.
+- Do not ask a swap tool (for example, Bankr) to buy by symbol/name only (for example, `"HAMSTER"`), because multiple tokens can share the same symbol/name.
+- If you need to acquire the payment token first, pass the exact `tokenAddress` from the selected `x402.accepts[]` entry to the swap tool, then use that same address for `approve` and `pay(...)`.
+
 Important field meanings in `402`:
 
 - `x402.referenceId`: payment key for this exact export request (derived from `source`, `limit`, `cursor`, `params`)
@@ -83,11 +89,15 @@ skills/airdrop-x402/scripts/x402-wallets.sh \
   --raw > /tmp/x402-challenge.json
 
 # 2) Extract the referenceId + one offer (example: HAMSTER)
+# IMPORTANT: symbols can be ambiguous. Use the x402-provided tokenAddress when swapping/buying.
 REFERENCE_ID="$(jq -r '.x402.referenceId' /tmp/x402-challenge.json)"
 PAYMENT_CONTRACT="$(jq -r '.x402.paymentContract' /tmp/x402-challenge.json)"
 TOKEN="$(jq -r '.x402.accepts[] | select(.asset=="HAMSTER") | .tokenAddress' /tmp/x402-challenge.json)"
 AMOUNT="$(jq -r '.x402.accepts[] | select(.asset=="HAMSTER") | .amountAtomic' /tmp/x402-challenge.json)"
 MULTIPLIER="$(jq -r '.x402.walletCount' /tmp/x402-challenge.json)" # usually equals --limit
+
+# If using a swap agent/tool (e.g. Bankr), request the token by address, not symbol:
+# "Swap to token 0x... (exact tokenAddress from x402 quote)", not just "swap to HAMSTER".
 
 # 3) Pay on-chain (example with Foundry cast; payer should be your agent wallet)
 # cast send "$TOKEN" "approve(address,uint256)" "$PAYMENT_CONTRACT" "$AMOUNT" --rpc-url "$BASE_RPC_URL" --private-key "$PK"
